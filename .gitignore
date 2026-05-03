@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.pyc
+.env
+.venv/
+venv/
+*.egg-info/
+.DS_Store
+*.log
+
+# Keep output data
+# output/ is committed for history tracking

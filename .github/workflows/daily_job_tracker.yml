@@ -1,0 +1,85 @@
+name: 🧑‍💻 Daily Job Tracker
+
+on:
+  schedule:
+    # Run at 08:00 UTC+8 (Taiwan time) = 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+permissions:
+  contents: write  # Required to push output/ to repo
+
+jobs:
+  scrape-and-report:
+    name: Scrape Jobs & Generate Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: 🔍 Run job scraper
+        run: |
+          cd scripts
+          python main.py
+        env:
+          PYTHONUNBUFFERED: "1"
+
+      - name: 📁 Check output files
+        run: |
+          echo "=== Output directory ==="
+          ls -lh output/
+          echo "=== Report size ==="
+          wc -l output/index.html || true
+          echo "=== Jobs count ==="
+          python -c "
+          import json
+          with open('output/jobs_data.json') as f:
+              jobs = json.load(f)
+          print(f'Total jobs: {len(jobs)}')
+          " || true
+
+      - name: 🚀 Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./output
+          publish_branch: gh-pages
+          force_orphan: false
+          keep_files: true
+          commit_message: |
+            🤖 Auto-update: ${{ github.run_number }} @ ${{ github.run_id }}
+
+      - name: 💾 Commit data back to main branch
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Add the jobs data file to track history
+          git add output/jobs_data.json output/meta.json || true
+          
+          # Only commit if there are changes
+          git diff --staged --quiet || git commit -m "📊 Update job data - $(date '+%Y-%m-%d %H:%M UTC')"
+          git push || true
+
+      - name: ✅ Report URL
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          echo ""
+          echo "🌐 GitHub Pages URL:"
+          echo "https://${REPO_OWNER}.github.io/${REPO_NAME}/"
+          echo ""
