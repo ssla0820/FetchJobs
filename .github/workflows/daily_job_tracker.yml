@@ -7,11 +7,12 @@ on:
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 permissions:
-  contents: write  # Required to push output/ to repo
+  contents: write   # Required to commit data back to repo
+  issues: write     # Required to create issues
 
 jobs:
   scrape-and-report:
-    name: Scrape Jobs & Generate Report
+    name: Scrape Jobs & Create Issue
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -42,8 +43,6 @@ jobs:
         run: |
           echo "=== Output directory ==="
           ls -lh output/
-          echo "=== Report size ==="
-          wc -l output/index.html || true
           echo "=== Jobs count ==="
           python -c "
           import json
@@ -52,16 +51,84 @@ jobs:
           print(f'Total jobs: {len(jobs)}')
           " || true
 
-      - name: 🚀 Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: 📝 Build issue body from jobs data
+        id: build_body
+        run: |
+          python <<'EOF'
+          import json
+          import os
+          from datetime import datetime, timezone, timedelta
+
+          # Taiwan time
+          tz = timezone(timedelta(hours=8))
+          now = datetime.now(tz)
+          date_str = now.strftime('%Y-%m-%d')
+          datetime_str = now.strftime('%Y-%m-%d %H:%M UTC+8')
+
+          with open('output/jobs_data.json', 'r', encoding='utf-8') as f:
+              jobs = json.load(f)
+
+          lines = []
+          lines.append(f"## 🧑‍💻 Daily Job Report — {date_str}")
+          lines.append("")
+          lines.append(f"- 🕒 Generated at: **{datetime_str}**")
+          lines.append(f"- 📊 Total jobs: **{len(jobs)}**")
+          lines.append(f"- 🔗 Workflow run: [#{os.environ['RUN_NUMBER']}](https://github.com/{os.environ['REPO']}/actions/runs/{os.environ['RUN_ID']})")
+          lines.append("")
+          lines.append("---")
+          lines.append("")
+
+          if not jobs:
+              lines.append("_No jobs found in this run._")
+          else:
+              # Adjust these field names to match your jobs_data.json schema
+              for i, job in enumerate(jobs, 1):
+                  title = job.get('title', 'Untitled')
+                  company = job.get('company', 'Unknown')
+                  location = job.get('location', '')
+                  url = job.get('url', '')
+                  salary = job.get('salary', '')
+                  source = job.get('source', '')
+
+                  header = f"### {i}. {title} — {company}"
+                  lines.append(header)
+                  if location:
+                      lines.append(f"- 📍 Location: {location}")
+                  if salary:
+                      lines.append(f"- 💰 Salary: {salary}")
+                  if source:
+                      lines.append(f"- 🌐 Source: {source}")
+                  if url:
+                      lines.append(f"- 🔗 [View posting]({url})")
+                  lines.append("")
+
+          body = "\n".join(lines)
+
+          # GitHub issue body limit is ~65k chars; truncate safely
+          MAX_LEN = 60000
+          if len(body) > MAX_LEN:
+              body = body[:MAX_LEN] + "\n\n_...truncated. See `output/jobs_data.json` in the repo for full data._"
+
+          with open('issue_body.md', 'w', encoding='utf-8') as f:
+              f.write(body)
+
+          # Export the title for the next step
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write(f"issue_title=🧑‍💻 Daily Job Report — {date_str} ({len(jobs)} jobs)\n")
+          EOF
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+
+      - name: 🐛 Create issue
+        uses: peter-evans/create-issue-from-file@v5
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./output
-          publish_branch: gh-pages
-          force_orphan: false
-          keep_files: true
-          commit_message: |
-            🤖 Auto-update: ${{ github.run_number }} @ ${{ github.run_id }}
+          title: ${{ steps.build_body.outputs.issue_title }}
+          content-filepath: ./issue_body.md
+          labels: |
+            job-report
+            automated
 
       - name: 💾 Commit data back to main branch
         run: |
@@ -70,16 +137,7 @@ jobs:
 
           # Add the jobs data file to track history
           git add output/jobs_data.json output/meta.json || true
-          
+
           # Only commit if there are changes
           git diff --staged --quiet || git commit -m "📊 Update job data - $(date '+%Y-%m-%d %H:%M UTC')"
           git push || true
-
-      - name: ✅ Report URL
-        run: |
-          REPO_OWNER="${{ github.repository_owner }}"
-          REPO_NAME="${{ github.event.repository.name }}"
-          echo ""
-          echo "🌐 GitHub Pages URL:"
-          echo "https://${REPO_OWNER}.github.io/${REPO_NAME}/"
-          echo ""
