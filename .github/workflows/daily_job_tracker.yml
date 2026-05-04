@@ -41,17 +41,15 @@ jobs:
 
       - name: 📁 Check output files
         run: |
-          echo "=== Repo root ==="
-          ls -la
-          echo ""
-          echo "=== Looking for output/ at repo root ==="
-          ls -lh output/ 2>/dev/null || echo "❌ output/ not found at repo root"
-          echo ""
-          echo "=== Looking for scripts/output/ ==="
-          ls -lh scripts/output/ 2>/dev/null || echo "❌ scripts/output/ not found"
-          echo ""
-          echo "=== Find any jobs_data.json ==="
-          find . -name "jobs_data.json" -not -path "./.git/*" 2>/dev/null || echo "❌ no jobs_data.json anywhere"
+          echo "=== Output directory ==="
+          ls -lh output/
+          echo "=== Jobs count ==="
+          python -c "
+          import json
+          with open('output/jobs_data.json') as f:
+              jobs = json.load(f)
+          print(f'Total jobs: {len(jobs)}')
+          " || true
 
       - name: 📝 Build issue body from jobs data
         id: build_body
@@ -60,7 +58,6 @@ jobs:
           import json
           import os
           from datetime import datetime, timezone, timedelta
-          from pathlib import Path
 
           # Taiwan time
           tz = timezone(timedelta(hours=8))
@@ -68,65 +65,42 @@ jobs:
           date_str = now.strftime('%Y-%m-%d')
           datetime_str = now.strftime('%Y-%m-%d %H:%M UTC+8')
 
-          # Try a few likely locations for the data file
-          candidates = [
-              Path('output/jobs_data.json'),
-              Path('scripts/output/jobs_data.json'),
-          ]
-          jobs_path = next((p for p in candidates if p.exists()), None)
+          with open('output/jobs_data.json', 'r', encoding='utf-8') as f:
+              jobs = json.load(f)
 
           lines = []
           lines.append(f"## 🧑‍💻 Daily Job Report — {date_str}")
           lines.append("")
           lines.append(f"- 🕒 Generated at: **{datetime_str}**")
-          lines.append(
-              f"- 🔗 Workflow run: "
-              f"[#{os.environ['RUN_NUMBER']}]"
-              f"(https://github.com/{os.environ['REPO']}/actions/runs/{os.environ['RUN_ID']})"
-          )
+          lines.append(f"- 📊 Total jobs: **{len(jobs)}**")
+          lines.append(f"- 🔗 Workflow run: [#{os.environ['RUN_NUMBER']}](https://github.com/{os.environ['REPO']}/actions/runs/{os.environ['RUN_ID']})")
+          lines.append("")
+          lines.append("---")
+          lines.append("")
 
-          if jobs_path is None:
-              # Scraper produced no data file — still create an issue to alert
-              lines.append("")
-              lines.append("⚠️ **Scraper did not produce `jobs_data.json`.**")
-              lines.append("Check the workflow logs for errors.")
-              title = f"⚠️ Job Report FAILED — {date_str}"
-              jobs_count = 0
+          if not jobs:
+              lines.append("_No jobs found in this run._")
           else:
-              with open(jobs_path, 'r', encoding='utf-8') as f:
-                  jobs = json.load(f)
-              jobs_count = len(jobs)
+              # Adjust these field names to match your jobs_data.json schema
+              for i, job in enumerate(jobs, 1):
+                  title = job.get('title', 'Untitled')
+                  company = job.get('company', 'Unknown')
+                  location = job.get('location', '')
+                  url = job.get('url', '')
+                  salary = job.get('salary', '')
+                  source = job.get('source', '')
 
-              lines.append(f"- 📊 Total jobs: **{jobs_count}**")
-              lines.append(f"- 📂 Source file: `{jobs_path}`")
-              lines.append("")
-              lines.append("---")
-              lines.append("")
-
-              if jobs_count == 0:
-                  lines.append("_No jobs found in this run._")
-              else:
-                  # Adjust these field names to match your jobs_data.json schema
-                  for i, job in enumerate(jobs, 1):
-                      title_text = job.get('title', 'Untitled')
-                      company = job.get('company', 'Unknown')
-                      location = job.get('location', '')
-                      url = job.get('url', '')
-                      salary = job.get('salary', '')
-                      source = job.get('source', '')
-
-                      lines.append(f"### {i}. {title_text} — {company}")
-                      if location:
-                          lines.append(f"- 📍 Location: {location}")
-                      if salary:
-                          lines.append(f"- 💰 Salary: {salary}")
-                      if source:
-                          lines.append(f"- 🌐 Source: {source}")
-                      if url:
-                          lines.append(f"- 🔗 [View posting]({url})")
-                      lines.append("")
-
-              title = f"🧑‍💻 Daily Job Report — {date_str} ({jobs_count} jobs)"
+                  header = f"### {i}. {title} — {company}"
+                  lines.append(header)
+                  if location:
+                      lines.append(f"- 📍 Location: {location}")
+                  if salary:
+                      lines.append(f"- 💰 Salary: {salary}")
+                  if source:
+                      lines.append(f"- 🌐 Source: {source}")
+                  if url:
+                      lines.append(f"- 🔗 [View posting]({url})")
+                  lines.append("")
 
           body = "\n".join(lines)
 
@@ -135,13 +109,12 @@ jobs:
           if len(body) > MAX_LEN:
               body = body[:MAX_LEN] + "\n\n_...truncated. See `output/jobs_data.json` in the repo for full data._"
 
-          Path('issue_body.md').write_text(body, encoding='utf-8')
+          with open('issue_body.md', 'w', encoding='utf-8') as f:
+              f.write(body)
 
           # Export the title for the next step
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
-              f.write(f"issue_title={title}\n")
-
-          print(f"✅ Built issue body: {len(body)} chars, {jobs_count} jobs")
+              f.write(f"issue_title=🧑‍💻 Daily Job Report — {date_str} ({len(jobs)} jobs)\n")
           EOF
         env:
           RUN_NUMBER: ${{ github.run_number }}
@@ -162,9 +135,8 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          # Add the jobs data file to track history (try both possible locations)
-          git add output/jobs_data.json output/meta.json 2>/dev/null || true
-          git add scripts/output/jobs_data.json scripts/output/meta.json 2>/dev/null || true
+          # Add the jobs data file to track history
+          git add output/jobs_data.json output/meta.json || true
 
           # Only commit if there are changes
           git diff --staged --quiet || git commit -m "📊 Update job data - $(date '+%Y-%m-%d %H:%M UTC')"
