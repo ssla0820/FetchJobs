@@ -37,7 +37,27 @@ jobs:
           python main.py
         env:
           PYTHONUNBUFFERED: "1"
+          
+      - name: 📂 Normalize output location
+        run: |
+          # If main.py wrote to scripts/output/, move it to repo root output/
+          if [ -d "scripts/output" ] && [ ! -d "output" ]; then
+            echo "Moving scripts/output/ → output/"
+            mv scripts/output output
+          elif [ -d "scripts/output" ] && [ -d "output" ]; then
+            echo "Both exist, copying scripts/output/* → output/"
+            cp -r scripts/output/* output/
+          fi
 
+          echo "=== Final output/ contents ==="
+          ls -la output/ || { echo "❌ output/ still doesn't exist"; exit 1; }
+
+          if [ ! -f "output/index.html" ]; then
+            echo "❌ ERROR: output/index.html not found"
+            exit 1
+          fi
+          echo "✅ output/index.html found ($(wc -c < output/index.html) bytes)"
+          
       - name: 📁 Check output files
         run: |
           echo "=== Output directory ==="
