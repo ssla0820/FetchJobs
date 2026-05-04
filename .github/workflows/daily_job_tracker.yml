@@ -58,6 +58,11 @@ jobs:
           fi
           echo "✅ output/index.html found ($(wc -c < output/index.html) bytes)"
           
+      - name: 🕒 Add build timestamp
+        run: |
+          echo "<!-- Built at $(date -u +'%Y-%m-%dT%H:%M:%SZ') by run #${{ github.run_number }} -->" >> output/index.html
+          echo "✅ Appended timestamp to index.html"    
+          
       - name: 📁 Check output files
         run: |
           echo "=== Output directory ==="
